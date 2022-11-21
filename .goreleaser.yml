@@ -1,0 +1,74 @@
+project_name: nats-watch
+
+release:
+  github:
+    owner: ripienaar
+    name: nats-watch
+  name_template: "Release {{.Version}}"
+  draft: true
+
+changelog:
+  skip: true
+
+builds:
+  - main: .
+    id: nats-watch
+    binary: nats-watch
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm
+      - arm64
+      - 386
+    goarm:
+      - 6
+      - 7
+    ignore:
+      - goos: darwin
+        goarch: 386
+
+archives:
+  - name_template: "nats-watch-{{.Version}}-{{.Os}}-{{.Arch}}{{if .Arm}}{{.Arm}}{{end}}"
+    wrap_in_directory: true
+    format: zip
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "SHA256SUMS"
+  algorithm: sha256
+
+nfpms:
+  - file_name_template: 'nats-watch-{{.Version}}-{{.Arch}}{{if .Arm}}{{.Arm}}{{end}}'
+    homepage:  https://www.devco.net
+    description: NATS Watch
+    maintainer: R.I. Pienaar <rip@devco.net>
+    license: Apache 2.0
+    vendor: Devco.Net
+    formats:
+      - deb
+      - rpm
+
+# .goreleaser.yaml
+dockers:
+  -
+    goos: linux
+    goarch: amd64
+    # Templates of the Docker image names.
+    image_templates:
+      - "ripienaar/nats-watch:latest"
+      - "ripienaar/nats-watch:{{ .Tag }}"
+
+    skip_push: trust
+
+    build_flag_templates:
+      - "--pull"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--platform=linux/arm64"
