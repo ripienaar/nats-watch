@@ -60,7 +60,7 @@ $ nats-watch \
     --context NW     \ # A NATS Context made using the nats CLI with connection information
     --listen 0.0.0.0 \ # Where to listen for Prometheus
     --port 8080      \ # The port to listen on for Prometheus
-    --server-ping    \ # Enables server pings which requires a system account
+    --server-ping      # Enables server pings which requires a system account
 ```
 
 Prometheus statistics are exposed on `/metrics` as usual.  The Prometheus Namespace defaults to `nats_watch` and can be
@@ -78,4 +78,4 @@ This is a new project extracted from a customer deployment and made a bit more g
 
 ## Contact
 
-R.I. Pienaar / rip@devco.net / @ripienaar / @ripienaar@mostadon.social
+R.I. Pienaar / rip@devco.net / [@ripienaar@mostadon.social](https://mastodon.social/@ripienaar)

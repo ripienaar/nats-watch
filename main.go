@@ -34,6 +34,7 @@ var (
 	port                                                  int
 	listen                                                string
 	nctxName                                              string
+	sysNctxName                                           string
 	logFile                                               string
 	debug                                                 bool
 	startGossip                                           bool
@@ -61,6 +62,7 @@ func main() {
 
 	app.Flag("name", "The name of this watcher").Required().StringVar(&name)
 	app.Flag("context", "NATS Context for connection").Required().PlaceHolder("NAME").StringVar(&nctxName)
+	app.Flag("system-context", "NATS Context for connections requiring a system account").PlaceHolder("NAME").StringVar(&sysNctxName)
 	app.Flag("listen", "Host to listen on for Prometheus metrics").Default("localhost").StringVar(&listen)
 	app.Flag("port", "Port to listen on for Prometheus metrics").PlaceHolder("PORT").Required().IntVar(&port)
 	app.Flag("ns", "Prometheus namespace").Default("nats_watch").PlaceHolder("NS").StringVar(&nameSpace)
@@ -113,14 +115,48 @@ func run(_ *fisk.ParseContext) error {
 	go interruptWatcher()
 	go setupPrometheus()
 
-	var nctx *natscontext.Context
-	if strings.HasPrefix(nctxName, string(os.PathSeparator)) {
-		nctx, err = natscontext.NewFromFile(nctxName)
+	wg := &sync.WaitGroup{}
+
+	if startGossip {
+		wg.Add(1)
+		go startGossipPublisher(ctx, wg)
+
+		wg.Add(1)
+		go startGossipReceiver(ctx, wg)
 	} else {
-		nctx, err = natscontext.New(nctxName, true)
+		log.Warnf("Gossip monitoring disabled")
+	}
+
+	if startServerPing {
+		wg.Add(1)
+		go startStatzMonitor(ctx, wg)
+	} else {
+		log.Warnf("Server ping monitoring disabled")
+	}
+
+	<-ctx.Done()
+
+	wg.Wait()
+
+	return nil
+}
+
+func connect(system bool) (*nats.Conn, error) {
+	var nctx *natscontext.Context
+	var err error
+
+	ctxName := nctxName
+	if system && sysNctxName != "" {
+		ctxName = sysNctxName
+	}
+
+	if strings.HasPrefix(ctxName, string(os.PathSeparator)) {
+		nctx, err = natscontext.NewFromFile(ctxName)
+	} else {
+		nctx, err = natscontext.New(ctxName, true)
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	nc, err := nctx.Connect(
@@ -148,37 +184,19 @@ func run(_ *fisk.ParseContext) error {
 		}),
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	wg := &sync.WaitGroup{}
-
-	if startGossip {
-		wg.Add(1)
-		go startGossipPublisher(ctx, wg, nc)
-
-		wg.Add(1)
-		go startGossipReceiver(ctx, wg, nc)
-	} else {
-		log.Warnf("Gossip monitoring disabled")
-	}
-
-	if startServerPing {
-		wg.Add(1)
-		go startStatzMonitor(ctx, wg, nc)
-	} else {
-		log.Warnf("Server ping monitoring disabled")
-	}
-
-	<-ctx.Done()
-
-	wg.Wait()
-
-	return nil
+	return nc, nil
 }
 
-func startStatzMonitor(ctx context.Context, wg *sync.WaitGroup, nc *nats.Conn) {
+func startStatzMonitor(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
+
+	nc, err := connect(true)
+	if err != nil {
+		log.Fatalf("Statsz monitor could not connect to nats: %v", err)
+	}
 
 	log.Infof("Starting Statsz monitor")
 
@@ -245,8 +263,13 @@ func startStatzMonitor(ctx context.Context, wg *sync.WaitGroup, nc *nats.Conn) {
 	}
 }
 
-func startGossipReceiver(ctx context.Context, wg *sync.WaitGroup, nc *nats.Conn) {
+func startGossipReceiver(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
+
+	nc, err := connect(false)
+	if err != nil {
+		log.Fatalf("Gossip receiver could not connect to nats: %v", err)
+	}
 
 	subj := fmt.Sprintf("%s.gossip.>", subjectPrefix)
 	log.Infof("Starting Gossip receiver on subject %s", subj)
@@ -280,8 +303,13 @@ func startGossipReceiver(ctx context.Context, wg *sync.WaitGroup, nc *nats.Conn)
 	sub.Unsubscribe()
 }
 
-func startGossipPublisher(ctx context.Context, wg *sync.WaitGroup, nc *nats.Conn) {
+func startGossipPublisher(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
+
+	nc, err := connect(false)
+	if err != nil {
+		log.Fatalf("Gossip publisher could not connect to nats: %v", err)
+	}
 
 	ticker := time.NewTicker(500 * time.Millisecond)
 	subj := fmt.Sprintf("%s.gossip.%s", subjectPrefix, name)
@@ -312,7 +340,7 @@ func startGossipPublisher(ctx context.Context, wg *sync.WaitGroup, nc *nats.Conn
 		err = nc.FlushWithContext(timeout)
 		cancel()
 		if err != nil {
-			log.Errorf("Gossip publishing failed: %v", err)
+			log.Errorf("Gossip flush failed: %v", err)
 			publishErrorCnt.Inc()
 			errorCnt.Inc()
 		}
