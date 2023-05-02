@@ -118,11 +118,16 @@ func run(_ *fisk.ParseContext) error {
 	wg := &sync.WaitGroup{}
 
 	if startGossip {
-		wg.Add(1)
-		go startGossipPublisher(ctx, wg)
+		nc, err := connect(false)
+		if err != nil {
+			log.Fatalf("Gossip connection could not connect to nats: %v", err)
+		}
 
 		wg.Add(1)
-		go startGossipReceiver(ctx, wg)
+		go startGossipPublisher(ctx, wg, nc)
+
+		wg.Add(1)
+		go startGossipReceiver(ctx, wg, nc)
 	} else {
 		log.Warnf("Gossip monitoring disabled")
 	}
@@ -263,13 +268,8 @@ func startStatzMonitor(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
-func startGossipReceiver(ctx context.Context, wg *sync.WaitGroup) {
+func startGossipReceiver(ctx context.Context, wg *sync.WaitGroup, nc *nats.Conn) {
 	defer wg.Done()
-
-	nc, err := connect(false)
-	if err != nil {
-		log.Fatalf("Gossip receiver could not connect to nats: %v", err)
-	}
 
 	subj := fmt.Sprintf("%s.gossip.>", subjectPrefix)
 	log.Infof("Starting Gossip receiver on subject %s", subj)
@@ -303,13 +303,8 @@ func startGossipReceiver(ctx context.Context, wg *sync.WaitGroup) {
 	sub.Unsubscribe()
 }
 
-func startGossipPublisher(ctx context.Context, wg *sync.WaitGroup) {
+func startGossipPublisher(ctx context.Context, wg *sync.WaitGroup, nc *nats.Conn) {
 	defer wg.Done()
-
-	nc, err := connect(false)
-	if err != nil {
-		log.Fatalf("Gossip publisher could not connect to nats: %v", err)
-	}
 
 	ticker := time.NewTicker(500 * time.Millisecond)
 	subj := fmt.Sprintf("%s.gossip.%s", subjectPrefix, name)
